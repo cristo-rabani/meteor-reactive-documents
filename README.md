@@ -12,6 +12,7 @@ $ meteor add vazco:reactive-documents
 var cursor = Meteor.users.find();
 
 var sets = new ReactiveDocuments(cursor);
+```
 
 ### .getDocument(id)
 Gets reactive document by id.
