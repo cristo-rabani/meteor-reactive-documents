@@ -1,36 +1,15 @@
 'use strict';
 /* global ReactiveDocuments: true */
-ReactiveDocuments = function (cursor) {
-    this.allDeps = new Tracker.Dependency();
+ReactiveDocuments = function (cursor, isAutoInitialize) {
+    this._allDeps = new Tracker.Dependency();
     this._docDeps = {}; // id -> Dependency
     this._docKeyDeps = {}; // id -> key -> Dependency
     this._documents = {};
-    var self = this;
-    var initialized = false;
     this.cursor = cursor;
-    _.extend(this, cursor.observeChanges({
-        added: function(id, fields){
-            self._documents[id] = fields;
-            fields._id = id;
-            self.changedDoc(id);
-            if(initialized){
-                self.allDeps.changed();
-            }
-        },
-        changed: function(id, fields){
-            _.each(fields, function(val, key){
-                self._documents[id][key] = val;
-                self.changedDocKey(id, key);
-            });
-        },
-        removed: function(id){
-            delete self._documents[id];
-            self.changedDoc(id);
-            self.allDeps.changed();
-        }
-    }));
-    self.allDeps.changed();
-    initialized = true;
+    this._initialized = false;
+    if(isAutoInitialize !== false){
+        this.init();
+    }
 };
 
 var _prepareDoc = function(self, id){
@@ -47,70 +26,191 @@ var _prepareDoc = function(self, id){
 };
 
 _.extend(ReactiveDocuments.prototype, {
-    getDocumentField: function(id, key){
+    init: function(){
+        if(!this.cursor || !this.cursor.observeChanges){
+            throw new Error('Missing cursor!');
+        }
+        if(this._initialized){
+            return;
+        }
+        var self = this;        
+        var handle = self.cursor.observeChanges({
+            added: function(id, fields){
+                self._documents[id] = fields;
+                fields._id = id;
+                self._changedDoc(id);
+                if(self._initialized){
+                    self._allDeps.changed();
+                }
+            },
+            changed: function(id, fields){
+                _.each(fields, function(val, key){
+                    self._documents[id][key] = val;
+                    self._changedDocKey(id, key);
+                });
+            },
+            removed: function(id){
+                delete self._documents[id];
+                self._changedDoc(id);
+                self._allDeps.changed();
+            }
+        });
+        self._allDeps.changed();
+        self._initialized = true;
+        _.extend(self, handle);
+        return handle;
+    },
+    isInitialized: function(isReactive){
+        if(isReactive !== false && !this._initialized){
+            if(!this.initDeps){
+                this.initDeps = new Tracker.Dependency();
+            }
+            this.initDeps.depend();
+        }        
+        return this._initialized;        
+    },
+    getDocumentField: function(id, key, isReactive){
         var self = this;
-        self.dependDoc(id);
-        self.dependDocKey(id, key);
+        if(isReactive !== false){
+            self._dependDoc(id);
+            self._dependDocKey(id, key);
+        }
         if(_.isObject(self._documents[id])){
             return self._documents[id][key];
         }
     },
-    getDocument: function (id, noTransform) {
-        this.dependDoc(id);
-        if(noTransform){
+    getDocument: function (id, isReactive, isTransform) {
+        if(isReactive !== false){
+            this._dependDoc(id);
+        }
+        if(isTransform !== false){
             return this._documents[id];
         }
         return _prepareDoc(this, id);
     },
-    getDocumentsWhere: function(keyValuePairs, noTransform){
-        if(!keyValuePairs || !_.isObject(keyValuePairs) || !_.size(keyValuePairs)){
+    getDocumentsWhere: function (keyValuePairs, isReactive, isTransform){
+        if(!keyValuePairs || !_.isObject(keyValuePairs)){
             console.error('You must pass object key:value to compare against docs');
             return;
         }
         var self = this;
-        self.allDeps.depend();
-        var keys = _.keys(keyValuePairs);
-        if(noTransform){
-            return _.filter(self._documents, function (doc) {
-                _.each(keys, function (key) {
-                    self.dependDocKey(doc._id, key);
-                });
-                return _.every(keyValuePairs, function (value, key) {
-                    return doc[key] === value;
-                });
-            });
+        var keys = _.keys(keyValuePairs), keysL = keys.length;
+        if(!keysL) {
+            return this.all(isReactive, isTransform);
         }
-        return _.chain(self._documents).filter(function (doc) {
-            _.each(keys, function (key) {
-                self.dependDocKey(doc._id, key);
-            });
-            return _.every(keyValuePairs, function (value, key) {
-                return doc[key] === value;
-            });
-        }).map(function(doc) {
-            return _prepareDoc(self, doc._id);
-        }).value();
+        var indexes = _.keys(self._documents), indexesL = indexes.length;
+        var i,p;
+        if(isReactive !== false){
+            self._allDeps.depend();
+            for (p = 0; p < indexesL; p++) {
+                for (i = 0; i < keysL; i++) {
+                    self._dependDocKey(indexes[p], keys[i]);
+                }
+            }
+        }
+        var docs = [], test;
+        for (p = 0; p < indexesL; p++) {
+            test = 0;
+            for (i = 0; i < keysL; i++) {
+                var key = keys[i];
+                if(self._documents[indexes[p]][key] === keyValuePairs[key]){
+                    test++;
+                }
+            }
+            if(test === keysL){
+                docs.push(self._documents[indexes[p]]);
+            }
+        }
+        var dL = docs.length;
+        if(isTransform !== false || !dL){
+            return docs;
+        }
+        for (var q = 0; q < dL; q++){
+            var dId = docs[q]._id;
+            docs[q] = _prepareDoc(self, dId);
+        }
+        return docs;
     },
 
-    all: function(noTransform) {
+    getDocumentOneWhere: function(keyValuePairs, isReactive, isTransform){
+        if(!keyValuePairs || !_.isObject(keyValuePairs)){
+            console.error('You must pass object key:value to compare against docs');
+            return;
+        }
         var self = this;
-        self.allDeps.depend();
-        if(noTransform){
-            return this._documents;
+        var keys = _.keys(keyValuePairs), keysL = keys.length;
+        var indexes = _.keys(self._documents), indexesL = indexes.length;
+        var i,p;
+        if(isReactive !== false){
+            self._allDeps.depend();
+            for (p = 0; p < indexesL; p++) {
+                for (i = 0; i < keysL; i++) {
+                    self._dependDocKey(indexes[p], keys[i]);
+                }
+            }
         }
-        return _.map(self._documents, function(value, id) {
-            return _prepareDoc(self, id);
-        });
+        if(!indexesL){
+            return;
+        }
+        var doc, test;
+        for (p = 0; p < indexesL; p++) {
+            test = 0;
+            for (i = 0; i < keysL; i++) {
+                var key = keys[i];
+                if(self._documents[indexes[p]][key] === keyValuePairs[key]){
+                    test++;
+                }
+            }
+            if(test === keysL){
+                doc = self._documents[indexes[p]];
+                break;
+            }
+
+        }
+        if(!doc){
+            return;
+        }
+        return isTransform ? _prepareDoc(self, doc._id) : doc;
+    },
+    all: function(isReactive, isTransform) {
+        var self = this;
+        if(isReactive !== false){
+            self._allDeps.depend();
+        }
+        var keys = _.keys(self._documents);
+        var length = keys.length;
+        var docs = [];
+        if(!length){
+            return docs;
+        }
+        var index;
+        if(isTransform !== false){
+            for (index = 0; index < length; index++) {
+                docs.push(self._documents[keys[index]]);
+            }
+        } else {
+            for (index = 0; index < length; index++) {
+                docs.push(_prepareDoc(self, keys[index]));
+            }
+        }
+        return docs;
     },
 
-    dependDoc: function (id) {
+    count: function(isReactive){
+        if(isReactive !== false){
+            this._allDeps.depend();
+        }
+        return _.size(this._documents);
+    },
+
+    _dependDoc: function (id) {
         if (!this._docDeps[id]) {
             this._docDeps[id] = new Tracker.Dependency();
         }
         this._docDeps[id].depend();
     },
 
-    dependDocKey: function (id, key) {
+    _dependDocKey: function (id, key) {
         if(!this._docKeyDeps[id]){
             this._docKeyDeps[id] = {};
         }
@@ -120,13 +220,13 @@ _.extend(ReactiveDocuments.prototype, {
         this._docKeyDeps[id][key].depend();
     },
 
-    changedDoc: function(id){
+    _changedDoc: function(id){
         if(this._docDeps[id]){
             this._docKeyDeps[id].changed();
         }
     },
 
-    changedDocKey: function(id, key){
+    _changedDocKey: function(id, key){
         if(this._docKeyDeps[id] && this._docKeyDeps[id][key]){
             this._docKeyDeps[id][key].changed();
         }

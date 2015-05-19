@@ -3,7 +3,7 @@
 Package.describe({
     name: 'vazco:reactive-documents',
     summary: 'Reactive sets of documents and their fields. Getting document or its field is faster.',
-    version: '1.0.0',
+    version: '1.5.0',
     git: 'https://github.com/cristo-rabani/meteor-reactive-documents.git'
 });
 

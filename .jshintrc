@@ -12,7 +12,7 @@
     "boss": true,
     "unused": true,
     "trailing": true,
-    "maxcomplexity": 12,
+    "maxcomplexity": 16,
     "maxlen": 120,
     "devel": true,
     "node": true,
