@@ -1,5 +1,5 @@
 # Reactive Documents
-This package provides reactive Set of documents.
+This package provides reactive Sets of documents.
 
 ## Installation
 
