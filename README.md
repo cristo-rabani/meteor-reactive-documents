@@ -11,10 +11,19 @@ $ meteor add vazco:reactive-documents
 ```
 var cursor = Meteor.users.find();
 
-var Set = new ReactiveDocuments(cursor, isAutoInitialize);
+var Set = new ReactiveDocuments(cursor, isAutoInitialize, keepsDocsInCache);
 ```
 
-Default value for isReactive, isTransform parameters is equal true.
+- isAutoInitialize (default true) This Set will be immediately initialized if true,
+ but take care if you didn't have subscription of documents ready,
+ all dependencies will be refreshed for each received document for subscription.
+ Some times you'll want pass is Auto Initialize = false,
+ and in the future launch the init() when all will be ready.
+
+- keepsDocsInCache (default false) This argument turns on cache of documents.
+  No documents will be removed from set. Even is really deleted on server.
+
+Default value for parameters - isReactive, isTransform is equal true for all following functions.
 
 ### .getDocument(id, isReactive, isTransform)
 Gets reactive document by id.

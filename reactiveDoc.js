@@ -1,20 +1,21 @@
 'use strict';
 /* global ReactiveDocuments: true */
-ReactiveDocuments = function (cursor, isAutoInitialize) {
+ReactiveDocuments = function (cursor, isAutoInitialize, keepsDocsInCache) {
     this._allDeps = new Tracker.Dependency();
     this._docDeps = {}; // id -> Dependency
     this._docKeyDeps = {}; // id -> key -> Dependency
     this._documents = {};
-    this.cursor = cursor;
+    this._cursor = cursor;
     this._initialized = false;
-    if(isAutoInitialize !== false){
+    this.keepsInCache = keepsDocsInCache;
+    if(cursor && isAutoInitialize !== false){
         this.init();
     }
 };
 
 var _prepareDoc = function(self, id){
-    if(_.isObject(self._documents[id]) && self.cursor._transform){
-        var doc = self.cursor._transform(self._documents[id]);
+    if(_.isObject(self._documents[id]) && self._cursor._transform){
+        var doc = self._cursor._transform(self._documents[id]);
         doc.getDocumentField = function(key){
             return self.getDocumentField(id, key);
         };
@@ -27,14 +28,14 @@ var _prepareDoc = function(self, id){
 
 _.extend(ReactiveDocuments.prototype, {
     init: function(){
-        if(!this.cursor || !this.cursor.observeChanges){
+        if(!this._cursor || !this._cursor.observeChanges){
             throw new Error('Missing cursor!');
         }
         if(this._initialized){
             return;
         }
-        var self = this;        
-        var handle = self.cursor.observeChanges({
+        var self = this;
+        var callbacks = {
             added: function(id, fields){
                 self._documents[id] = fields;
                 fields._id = id;
@@ -54,20 +55,35 @@ _.extend(ReactiveDocuments.prototype, {
                 self._changedDoc(id);
                 self._allDeps.changed();
             }
-        });
+        };
+        if(self.keepsInCache){
+            delete callbacks.removed;
+        }
+        self._handle = self._cursor.observeChanges(callbacks);
         self._allDeps.changed();
         self._initialized = true;
-        _.extend(self, handle);
-        return handle;
     },
-    isInitialized: function(isReactive){
-        if(isReactive !== false && !this._initialized){
+    ready: function(isReactive){
+        if(isReactive !== false){
             if(!this.initDeps){
                 this.initDeps = new Tracker.Dependency();
             }
             this.initDeps.depend();
         }        
         return this._initialized;        
+    },
+    setNewCursor: function(cursor){
+        if(!cursor){
+            console.error('Missing new cursor!');
+            return;
+        }
+        var oldName = this._cursor && this._cursor.collection && this._cursor.collection.name;
+        var newName = cursor.collection && cursor.collection.name;
+        if(oldName && newName !== oldName){
+            console.warn('New cursor is from different collection....');
+        }
+        this.stop();
+        this._cursor = cursor;
     },
     getDocumentField: function(id, key, isReactive){
         var self = this;
@@ -84,9 +100,9 @@ _.extend(ReactiveDocuments.prototype, {
             this._dependDoc(id);
         }
         if(isTransform !== false){
-            return this._documents[id];
+            return _prepareDoc(this, id);
         }
-        return _prepareDoc(this, id);
+        return this._documents[id];
     },
     getDocumentsWhere: function (keyValuePairs, isReactive, isTransform){
         if(!keyValuePairs || !_.isObject(keyValuePairs)){
@@ -122,7 +138,7 @@ _.extend(ReactiveDocuments.prototype, {
             }
         }
         var dL = docs.length;
-        if(isTransform !== false || !dL){
+        if(isTransform === false || !dL){
             return docs;
         }
         for (var q = 0; q < dL; q++){
@@ -170,8 +186,9 @@ _.extend(ReactiveDocuments.prototype, {
         if(!doc){
             return;
         }
-        return isTransform ? _prepareDoc(self, doc._id) : doc;
+        return isTransform !== false ? _prepareDoc(self, doc._id) : doc;
     },
+
     all: function(isReactive, isTransform) {
         var self = this;
         if(isReactive !== false){
@@ -184,7 +201,7 @@ _.extend(ReactiveDocuments.prototype, {
             return docs;
         }
         var index;
-        if(isTransform !== false){
+        if(isTransform === false){
             for (index = 0; index < length; index++) {
                 docs.push(self._documents[keys[index]]);
             }
@@ -221,8 +238,8 @@ _.extend(ReactiveDocuments.prototype, {
     },
 
     _changedDoc: function(id){
-        if(this._docDeps[id]){
-            this._docKeyDeps[id].changed();
+        if (this._docDeps[id]) {
+            this._docDeps[id].changed();
         }
     },
 
@@ -231,20 +248,32 @@ _.extend(ReactiveDocuments.prototype, {
             this._docKeyDeps[id][key].changed();
         }
     },
-    clear: function () {
+    /**
+     *
+     * @param isPermanent {boolean=} default as flag keepsInCache
+     */
+    clear: function (isPermanent) {
         var self = this;
-        delete self._documents;
+        if((_.isUndefined(isPermanent) && self.keepsInCache) || isPermanent){
+            self._documents = {};
+        }
         _.each(self._docDeps, function (docDeps) {
             if (docDeps) {
-                docDeps.change();
+                docDeps.changed();
             }
         });
         _.each(self._docKeyDeps, function (keyDeps) {
             _.each(keyDeps, function (k) {
-                if (k && k.deps) {
-                    k.deps.changed();
+                if (k) {
+                    k.changed();
                 }
             });
         });
+    },
+    stop: function(){
+        if(this._handle){
+            this._handle.stop();
+        }
+        this._initialized = false;
     }
 });
