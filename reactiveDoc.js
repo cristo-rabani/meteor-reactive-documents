@@ -28,40 +28,44 @@ var _prepareDoc = function(self, id){
 
 _.extend(ReactiveDocuments.prototype, {
     init: function(){
-        if(!this._cursor || !this._cursor.observeChanges){
-            throw new Error('Missing cursor!');
-        }
-        if(this._initialized){
-            return;
-        }
         var self = this;
-        var callbacks = {
-            added: function(id, fields){
-                self._documents[id] = fields;
-                fields._id = id;
-                self._changedDoc(id);
-                if(self._initialized){
+        Tracker.nonreactive(function(){
+            if(!self._cursor || !self._cursor.observeChanges){
+                throw new Error('Missing cursor!');
+            }
+            if(self._initialized){
+                return;
+            }
+
+            var callbacks = {
+                added: function(id, fields){
+                    self._documents[id] = fields;
+                    fields._id = id;
+                    self._changedDoc(id);
+                    if(self._initialized){
+                        self._allDeps.changed();
+                    }
+                },
+                changed: function(id, fields){
+                    _.each(fields, function(val, key){
+                        self._documents[id][key] = val;
+                        self._changedDocKey(id, key);
+                    });
+                },
+                removed: function(id){
+                    delete self._documents[id];
+                    self._changedDoc(id);
                     self._allDeps.changed();
                 }
-            },
-            changed: function(id, fields){
-                _.each(fields, function(val, key){
-                    self._documents[id][key] = val;
-                    self._changedDocKey(id, key);
-                });
-            },
-            removed: function(id){
-                delete self._documents[id];
-                self._changedDoc(id);
-                self._allDeps.changed();
+            };
+            if(self.keepsInCache){
+                delete callbacks.removed;
             }
-        };
-        if(self.keepsInCache){
-            delete callbacks.removed;
-        }
-        self._handle = self._cursor.observeChanges(callbacks);
-        self._allDeps.changed();
-        self._initialized = true;
+
+            self._handle = self._cursor.observeChanges(callbacks);
+            self._allDeps.changed();
+            self._initialized = true;
+        });
     },
     ready: function(isReactive){
         if(isReactive !== false){
